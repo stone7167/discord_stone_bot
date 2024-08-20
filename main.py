@@ -10,6 +10,7 @@ from disnake.ext import commands, tasks
 from datetime import datetime, timedelta
 from disnake import FFmpegPCMAudio, PCMVolumeTransformer
 from importlib.metadata import version, PackageNotFoundError
+from koreanbots.model import KoreanbotsVote
 
 intents = disnake.Intents.all()
 bot = commands.Bot(command_prefix="/", intents=intents)
@@ -731,7 +732,7 @@ async def wallet(ctx, member_id: str = None):
     
     tos = '정상' if tos_data[0] == 0 else '이용제한'
     
-    embed = disnake.Embed(title=f"{user.name}의 지갑 💰", color=0x00ff00)
+    embed = disnake.Embed(title=f"{user.name}님의 지갑 💰", color=0x00ff00)
     embed.set_thumbnail(url=user.display_avatar.url)
     embed.add_field(name="아이디", value=f"{user.id}", inline=False)
     embed.add_field(name="레벨", value=f"{level:,}({exp:,}) Level", inline=False)
@@ -841,25 +842,40 @@ async def earn_money(ctx):
         else:
             await ctx.send(f'틀렸습니다! 정답은 {correct_answer}입니다.')
 
-async def is_voted_bot(self, user_id: int, bot_id: int) -> koreanbots.model.KoreanbotsVote:
+async def is_voted_bot(self, user_id: int, bot_id: int) -> KoreanbotsVote:
         """
         주어진 bot_id로 user_id를 통해 해당 user의 투표 여부를 반환합니다.
-        """
-        return koreanbots.model.KoreanbotsVote(**await self.get_bot_vote(user_id, bot_id))
 
-@commands.slash_command(name="출석체크", description="봇 투표 여부를 확인하고 돈을 지급합니다.")
-async def check_in(self, ctx: disnake.CommandInteraction):
+        :param user_id:
+            요청할 user의 ID를 지정합니다.
+        :type user_id:
+            int
+
+        :param bot_id:
+            요청할 봇의 ID를 지정합니다.
+        :type bot_id:
+            int
+
+        :return:
+            투표여부를 담고 있는 KoreanbotsVote클래스입니다.
+        :rtype:
+            KoreanbotsVote
+        """
+        return KoreanbotsVote(**await self.get_bot_vote(user_id, bot_id))
+
+@bot.slash_command(name="출석체크", description="봇 투표 여부를 확인하고 돈을 지급합니다.")
+async def check_in(self, ctx: disnake.CommandInteraction):  # self 추가
     user_id = ctx.author.id
     bot_id = security.bot_id
 
     # 투표 여부 확인
-    vote_info = await self.is_voted_bot(user_id, bot_id)
+    vote_info = await self.is_voted_bot(user_id, bot_id)  # self 사용
 
     if vote_info.voted:  # 'voted' 속성이 True인 경우
         # 사용자에게 지급할 금액
         payment_amount = 50000  # 지급할 금액 설정
 
-        await addmoney(self.id, payment_amount)
+        await addmoney(user_id, payment_amount)
 
         embed = disnake.Embed(title="✅ 출석 체크 완료", color=0x00FF00)
         embed.add_field(name="금액 지급", value=f"{payment_amount}원이 지급되었습니다.")
@@ -868,8 +884,8 @@ async def check_in(self, ctx: disnake.CommandInteraction):
         embed = disnake.Embed(title="❌ 출석 체크 실패", color=0xFF0000)
         embed.add_field(name="오류", value="투표하지 않았습니다.")
         await ctx.send(embed=embed)
-'''
-@bot.slash_command(name="송금", description="돈 송금")
+
+#@bot.slash_command(name="송금", description="돈 송금")
 async def send_money(ctx, get_user: disnake.Member = commands.Param(name="받는사람"), money: int = commands.Param(name="금액")):
     await member_status(ctx)
     economy_aiodb = await aiosqlite.connect("economy.db")
@@ -904,7 +920,7 @@ async def send_money(ctx, get_user: disnake.Member = commands.Param(name="받는
     embed.add_field(name="받는사람", value=f"{get_user.mention}")
     embed.add_field(name="송금 금액", value=f"{money:,}")
     await ctx.send(embed=embed)
-'''
+
 @bot.slash_command(name="도박", description="도박 (확률 25%, 2배, 실패시 -1배)")
 async def betting(ctx, money: int = commands.Param(name="금액")):
     await member_status(ctx)
@@ -1170,7 +1186,7 @@ async def license_code_remove(ctx: disnake.CommandInteraction, code: str):
     await aiocursor.close()
     await economy_aiodb.close()
 
-@bot.slash_command(name="코드사용", description="회원 가입을 위한 코드 사용.")
+@bot.slash_command(name="코드사용", description="멤버쉽 회원을 등록하거나 기간을 연장합니다.")
 async def license_code_use(ctx: disnake.CommandInteraction, code: str):
     economy_aiodb = await aiosqlite.connect("membership.db")
 
@@ -1183,6 +1199,7 @@ async def license_code_use(ctx: disnake.CommandInteraction, code: str):
         embed.add_field(name="❌ 오류", value="유효하지 않은 코드입니다.")
         await ctx.send(embed=embed, ephemeral=True)
         await aiocursor.close()
+        await economy_aiodb.close()
         return
 
     # use 값이 1이면 이미 사용된 코드
@@ -1191,12 +1208,14 @@ async def license_code_use(ctx: disnake.CommandInteraction, code: str):
         embed.add_field(name="❌ 오류", value="이미 사용된 코드입니다.")
         await ctx.send(embed=embed, ephemeral=True)
         await aiocursor.close()
+        await economy_aiodb.close()
         return
 
     # 현재 날짜 계산
     current_date = datetime.now()
-    expiration_date = current_date + timedelta(days=license_data[1])
-    
+    additional_days = license_data[1]
+    expiration_date = current_date + timedelta(days=additional_days)
+
     # user 테이블에서 현재 사용자 확인
     aiocursor = await economy_aiodb.execute("SELECT class, expiration_date FROM user WHERE id=?", (ctx.author.id,))
     dbdata = await aiocursor.fetchone()
@@ -1211,6 +1230,8 @@ async def license_code_use(ctx: disnake.CommandInteraction, code: str):
         await ctx.send(embed=embed, ephemeral=True)
     else:
         member_class = int(dbdata[0])
+        existing_expiration_date = datetime.strptime(dbdata[1], '%Y/%m/%d')
+
         if member_class == 0:  # 0: 비회원
             # 비회원에서 회원으로 변경
             await economy_aiodb.execute("UPDATE user SET class = ?, expiration_date = ? WHERE id = ?", 
@@ -1220,13 +1241,50 @@ async def license_code_use(ctx: disnake.CommandInteraction, code: str):
             embed.add_field(name="✅ 성공", value="비회원에서 회원으로 변경되었습니다.")
             await ctx.send(embed=embed, ephemeral=True)
         else:
-            embed = disnake.Embed(color=embederrorcolor)
-            embed.add_field(name="❌ 오류", value="이미 회원입니다.")
+            # 기존 만료일에 추가
+            new_expiration_date = existing_expiration_date + timedelta(days=additional_days)
+            await economy_aiodb.execute("UPDATE user SET expiration_date = ? WHERE id = ?", 
+                                         (new_expiration_date.strftime('%Y/%m/%d'), ctx.author.id))
+            await economy_aiodb.commit()
+            embed = disnake.Embed(color=0x00ff00)
+            embed.add_field(name="✅ 성공", value="기간이 연장되었습니다.")
             await ctx.send(embed=embed, ephemeral=True)
 
     # 코드 사용 처리 (use 값을 1로 업데이트)
     await economy_aiodb.execute("UPDATE license SET use = ? WHERE code = ?", (1, code))
     await economy_aiodb.commit()
+
+    await aiocursor.close()
+    await economy_aiodb.close()
+
+@bot.slash_command(name="멤버십", description="현재 멤버십 상태를 확인합니다.")
+async def check_membership_status(ctx: disnake.CommandInteraction):
+    economy_aiodb = await aiosqlite.connect("membership.db")
+
+    # user 테이블에서 현재 사용자 확인
+    aiocursor = await economy_aiodb.execute("SELECT class, expiration_date FROM user WHERE id=?", (ctx.author.id,))
+    dbdata = await aiocursor.fetchone()
+
+    if dbdata is None:
+        embed = disnake.Embed(color=embederrorcolor)
+        embed.add_field(name="❌ 오류", value="회원이 아닙니다.")
+        await ctx.send(embed=embed, ephemeral=True)
+    else:
+        member_class = int(dbdata[0])
+        expiration_date = dbdata[1]
+
+        if member_class == 0:
+            status = "비회원"
+        elif member_class == 1:
+            status = "회원"
+        elif member_class == 2:
+            status = "개발자"
+        else:
+            print("error : 데이터값이 0, 1, 2가 아닙니다.")
+
+        embed = disnake.Embed(color=0x00ff00)
+        embed.add_field(name=f"{ctx.author.name}님의 멤버십 📋", value=f"상태: {status}\n만료일: {expiration_date}")
+        await ctx.send(embed=embed)
 
     await aiocursor.close()
     await economy_aiodb.close()
@@ -2142,15 +2200,15 @@ async def check_expired_members():
 
 check_expired_members.start()
 
-limit_level = 1000  # 최대 레벨 (예시)
+limit_level = 1000  # 최대 레벨
 
 def calculate_experience_for_level(current_level):
     if current_level is None:
         current_level = 1  # 기본값 설정
         
-    E_0 = 100  # 기본 경험치 (예시)
-    r = 1.5    # 경험치 증가 비율 (예시)
-    k = 50     # 추가 경험치 (예시)
+    E_0 = 100  # 기본 경험치
+    r = 1.5    # 경험치 증가 비율
+    k = 50     # 추가 경험치
 
     n = current_level
     base_experience = math.floor(E_0 * (r ** (n - 1)) + k)
@@ -2203,18 +2261,20 @@ async def check_experience():
 
     # DM 메시지 전송
     for user_id, adjusted_level in messages:
-        user = await bot.fetch_user(user_id)
-        if user:
-            try:
+        try:
+            user = await bot.fetch_user(user_id)
+            if user:
                 channel = await user.create_dm()
                 embed = disnake.Embed(
                     title="레벨 업! 🎉",
-                    description=f'축하합니다! 레벨이 **{adjusted_level}**로 올랐습니다!', 
+                    description=f'축하합니다! 레벨이 **{adjusted_level}**로 올랐습니다!',
                     color=0x00ff00
                 )
                 await channel.send(embed=embed)
-            except disnake.errors.HTTPException as e:
-                print(f"DM을 보낼 수 없습니다: {e}")
+        except disnake.errors.NotFound:
+            print(f"사용자를 찾을 수 없습니다: {user_id}")
+        except disnake.errors.HTTPException as e:
+            print(f"DM을 보낼 수 없습니다: {e}")
 
 check_experience.start()
 
